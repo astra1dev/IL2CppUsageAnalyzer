@@ -22,6 +22,7 @@ public static partial class Program
         public bool IsStripped { get; set; }
         public bool IsCompilerGenerated { get; set; }
         public bool IsGeneric { get; set; }
+        public bool IsFlagged { get; set; }
         public List<string> MonoUsages { get; set; } = [];
         public List<string> XrefUsages { get; set; } = [];
     }
@@ -66,6 +67,7 @@ public static partial class Program
 
         var strippedCount = 0;
         var inlinedCount = 0;
+        var flaggedMethods = 0;
 
         foreach (var methodRef in methodInfos)
         {
@@ -83,11 +85,23 @@ public static partial class Program
             {
                 inlinedCount++;
             }
+
+            // compare mono and xref usages
+            var monoUsagesSet = new HashSet<string>(methodRef.Value.MonoUsages.Select(NormalizeXrefName));
+            var xrefUsagesSet = new HashSet<string>(xrefInfo.Usages);
+            var missingInXref = monoUsagesSet.Except(xrefUsagesSet).ToList();
+            var missingInMono = xrefUsagesSet.Except(monoUsagesSet).ToList();
+            if (missingInXref.Count > 0 || missingInMono.Count > 0)
+            {
+                flaggedMethods++;
+                methodRef.Value.IsFlagged = true;
+            }
         }
 
         Console.WriteLine($"Total methods analyzed: {methodInfos.Count}");
         Console.WriteLine($"Methods stripped (no xref): {strippedCount}");
         Console.WriteLine($"Methods inlined (xref count != mono count): {inlinedCount}");
+        Console.WriteLine($"Methods flagged (mismatched usages): {flaggedMethods}");
         Console.WriteLine();
         const string resultsFile = "method_analysis_results.json";
         var json = JsonSerializer.Serialize(methodInfos, new JsonSerializerOptions { WriteIndented = true });
