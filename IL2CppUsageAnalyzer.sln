@@ -2,6 +2,10 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "IL2CppUsageAnalyzer", "IL2CppUsageAnalyzer\IL2CppUsageAnalyzer.csproj", "{66BF3840-7B33-45CB-8679-8212676011D7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HarmonyPatchAnalyzer", "HarmonyPatchAnalyzer\HarmonyPatchAnalyzer.csproj", "{F092CFAC-E59F-4FF8-BC3A-84DD19B11156}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "NameNormalizer", "NameNormalizer\NameNormalizer.csproj", "{9BEDDEA5-FA45-49B1-B7F4-F1C2F72B1A1D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -12,5 +16,13 @@ Global
 		{66BF3840-7B33-45CB-8679-8212676011D7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{66BF3840-7B33-45CB-8679-8212676011D7}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{66BF3840-7B33-45CB-8679-8212676011D7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F092CFAC-E59F-4FF8-BC3A-84DD19B11156}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F092CFAC-E59F-4FF8-BC3A-84DD19B11156}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F092CFAC-E59F-4FF8-BC3A-84DD19B11156}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F092CFAC-E59F-4FF8-BC3A-84DD19B11156}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9BEDDEA5-FA45-49B1-B7F4-F1C2F72B1A1D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9BEDDEA5-FA45-49B1-B7F4-F1C2F72B1A1D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9BEDDEA5-FA45-49B1-B7F4-F1C2F72B1A1D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9BEDDEA5-FA45-49B1-B7F4-F1C2F72B1A1D}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

@@ -1,15 +1,13 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.RegularExpressions;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
+using NameNormalizer;
 
 namespace IL2CppUsageAnalyzer;
 
-public static partial class Program
+public static class Program
 {
-    [JsonSerializable(typeof(AnalyzedMethodInfo))]
     [SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
     [SuppressMessage("ReSharper", "AutoPropertyCanBeMadeGetOnly.Global")]
     [SuppressMessage("ReSharper", "CollectionNeverQueried.Global")]
@@ -27,7 +25,6 @@ public static partial class Program
         public List<string> XrefUsages { get; set; } = [];
     }
 
-    [JsonSerializable(typeof(Dictionary<string, AnalyzedMethodInfo>))]
     [SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
     [SuppressMessage("ReSharper", "AutoPropertyCanBeMadeGetOnly.Global")]
     public class XrefInfo
@@ -56,7 +53,7 @@ public static partial class Program
         var xrefMethodRefs = ParseXrefs(xrefDump);
         var xrefGenericCollapsed = xrefMethodRefs
             .Where(kvp => kvp.Key.Contains('<') && kvp.Key.Contains('>'))
-            .GroupBy(kvp => CollapseGenerics(kvp.Key))
+            .GroupBy(kvp => Normalizer.CollapseGenerics(kvp.Key))
             .ToDictionary(
                 g => g.Key,
                 g => new XrefInfo {
@@ -71,8 +68,9 @@ public static partial class Program
 
         foreach (var methodRef in methodInfos)
         {
-            if (!xrefMethodRefs.TryGetValue(NormalizeXrefName(methodRef.Key), out var xrefInfo) &&
-                !xrefGenericCollapsed.TryGetValue(NormalizeXrefName(methodRef.Key), out xrefInfo))
+            var xrefName = Normalizer.NormalizeXrefName(methodRef.Key);
+            if (!xrefMethodRefs.TryGetValue(xrefName, out var xrefInfo) &&
+                !xrefGenericCollapsed.TryGetValue(xrefName, out xrefInfo))
             {
                 strippedCount++;
                 methodRef.Value.IsStripped = true;
@@ -87,7 +85,7 @@ public static partial class Program
             }
 
             // compare mono and xref usages
-            var monoUsagesSet = new HashSet<string>(methodRef.Value.MonoUsages.Select(NormalizeXrefName));
+            var monoUsagesSet = new HashSet<string>(methodRef.Value.MonoUsages.Select(Normalizer.NormalizeXrefName));
             var xrefUsagesSet = new HashSet<string>(xrefInfo.Usages);
             var missingInXref = monoUsagesSet.Except(xrefUsagesSet).ToList();
             var missingInMono = xrefUsagesSet.Except(monoUsagesSet).ToList();
@@ -121,23 +119,6 @@ public static partial class Program
         return xrefs;
     }
 
-    private static readonly Dictionary<string, string> TypeAliases = new()
-    {
-        ["System.Void"] = "void",
-        ["System.Boolean"] = "bool",
-        ["System.Byte"] = "unsignedchar",
-        ["System.SByte"] = "signedchar",
-        ["System.Char"] = "wchar_t",
-        ["System.Int16"] = "short",
-        ["System.UInt16"] = "unsignedshort",
-        ["System.Int32"] = "int",
-        ["System.UInt32"] = "unsignedint",
-        ["System.Int64"] = "long",
-        ["System.UInt64"] = "unsignedlong",
-        ["System.Single"] = "float",
-        ["System.Double"] = "double",
-    };
-
     private static Dictionary<string, AnalyzedMethodInfo> AnalyzeMethods(string assemblyPath)
     {
         var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
@@ -147,11 +128,11 @@ public static partial class Program
         // First pass: index all methods
         foreach (var module in assembly.Modules)
         {
-            foreach (var type in GetAllTypes(module))
+            foreach (var type in MonoUtils.GetAllTypes(module))
             {
                 foreach (var method in type.Methods)
                 {
-                    var methodName = NormalizeMonoMethod(method);
+                    var methodName = Normalizer.NormalizeMonoMethod(method);
 
                     if (method.CustomAttributes.Any(attr => attr.AttributeType.Name.Contains("IteratorStateMachineAttribute")))
                     {
@@ -182,7 +163,7 @@ public static partial class Program
 
                     var methodUsage = new AnalyzedMethodInfo
                     {
-                        ReturnType = NormalizeMonoName(method.ReturnType.FullName),
+                        ReturnType = Normalizer.NormalizeMonoName(method.ReturnType.FullName),
                         IsProperty = method.IsSpecialName && (method.Name.Contains("get_") || method.Name.Contains("set_")),
                         IsCompilerGenerated = compilerGeneratedAttr != null || compilerGeneratedTypeAttr != null,
                         IsGeneric = isGeneric,
@@ -194,27 +175,27 @@ public static partial class Program
 
         // Second pass: find usages
         foreach (var module in assembly.Modules) {
-            foreach (var type in GetAllTypes(module)) {
+            foreach (var type in MonoUtils.GetAllTypes(module)) {
                 foreach (var method in type.Methods) {
                     if (!method.HasBody)
                     {
                         continue;
                     }
 
-                    var methodName = NormalizeMonoMethod(method);
+                    var methodName = Normalizer.NormalizeMonoMethod(method);
                     foreach (var instr in method.Body.Instructions)
                     {
                         if (instr.OpCode == OpCodes.Call || instr.OpCode == OpCodes.Callvirt)
                         {
                             if (instr.Operand is MethodReference called)
                             {
-                                var calledName = NormalizeMonoMethod(called);
+                                var calledName = Normalizer.NormalizeMonoMethod(called);
                                 if (!methodRefs.TryGetValue(calledName, out var methodUsage))
                                 {
                                     continue;
                                 }
                                 methodUsage.MonoCount += 1;
-                                methodUsage.MonoUsages.Add(NormalizeMonoMethod(method));
+                                methodUsage.MonoUsages.Add(Normalizer.NormalizeMonoMethod(method));
                             }
                         }
 
@@ -244,140 +225,4 @@ public static partial class Program
         }
         return methodRefs;
     }
-
-    private static IEnumerable<TypeDefinition> GetAllTypes(ModuleDefinition module)
-    {
-        foreach (var type in module.Types)
-        {
-            yield return type;
-            foreach (var nested in GetNestedTypesRecursive(type))
-                yield return nested;
-        }
-    }
-
-    private static IEnumerable<TypeDefinition> GetNestedTypesRecursive(TypeDefinition type)
-    {
-        foreach (var nested in type.NestedTypes)
-        {
-            yield return nested;
-            foreach (var subNested in GetNestedTypesRecursive(nested))
-                yield return subNested;
-        }
-    }
-
-    private static string CollapseGenerics(string xref)
-    {
-        var match = GenericMethodMatch().Match(xref);
-
-        if (!match.Success)
-        {
-            return GenericReplace().Replace(xref, "${prefix}");
-        }
-
-        var prefix = match.Groups["prefix"].Value;
-        var genericType = match.Groups["generic"].Value;
-        var parameters = match.Groups["params"].Value;
-
-        var collapsedParams = parameters.Replace(genericType, "T");
-
-        var result = $"{prefix}{collapsedParams}";
-        return result;
-    }
-
-    private static string NormalizeXrefName(string name)
-    {
-        name = name.Replace("<>", "__");
-        if (name.Contains(">d"))
-        {
-            var parts = name.Split(">d");
-            var firstColon = parts[1].IndexOf("::", StringComparison.Ordinal);
-            var before = parts[1].Substring(0, firstColon);
-            var after = parts[1].Substring(firstColon + 2);
-            name = $"{parts[0]}_d{before}::{after.Replace("::", "_")}";
-        }
-
-        name = name.Replace(">d__", "_d__").Replace(">b__", "_b__").Replace("::<", "::_");
-        return name;
-    }
-
-    private static string NormalizeMonoMethod(MethodDefinition method)
-    {
-        var typeName = NormalizeMonoName(method.DeclaringType.FullName);
-        var methodName = NormalizeMonoName(method.Name);
-        if (method.Parameters.Count == 0)
-        {
-            return $"{typeName}::{methodName}(void)";
-        }
-        var parameters = string.Join(",", method.Parameters.Select(NormalizeMonoParameter));
-        return $"{typeName}::{methodName}({parameters})";
-    }
-
-    private static string NormalizeMonoMethod(MethodReference method)
-    {
-        var typeName = NormalizeMonoName(method.DeclaringType.FullName);
-        var methodName = NormalizeMonoName(method.Name);
-        if (method.Parameters.Count == 0)
-        {
-            return $"{typeName}::{methodName}(void)";
-        }
-        var parameters = string.Join(",", method.Parameters.Select(NormalizeMonoParameter));
-        return $"{typeName}::{methodName}({parameters})";
-    }
-
-    private static string NormalizeMonoParameter(ParameterDefinition parameter)
-    {
-        return NormalizeMonoType(parameter.ParameterType.FullName);
-    }
-
-    private static string NormalizeMonoType(string typeName)
-    {
-        // Shortcut if the entire type matches an alias
-        if (TypeAliases.TryGetValue(typeName, out var alias))
-            return alias;
-
-        // Handle generics like System::Func<T,System::Single>
-        // Match base type and inner generic arguments
-        var match = GenericMatch().Match(typeName);
-        if (match.Success)
-        {
-            var baseType = match.Groups["base"].Value;
-            var args = match.Groups["args"].Value;
-
-            // Split by comma, normalize each, and rejoin
-            var normalizedArgs = args
-                .Split(',')
-                .Select(arg => NormalizeMonoType(arg.Trim()))
-                .ToArray();
-
-            return NormalizeMonoName($"{baseType}<{string.Join(",", normalizedArgs)}>");
-        }
-
-        // Not a generic type, return normalized name
-        return NormalizeMonoName(typeName);
-    }
-
-    private static string NormalizeMonoName(string monoName)
-    {
-        if (string.IsNullOrEmpty(monoName))
-            return monoName;
-
-        return monoName
-            .Replace("<.cctor>", "__cctor_")    // replace <.cctor> with __cctor_
-            .Replace("<.ctor>", "__ctor_")      // replace <.ctor> with __ctor_
-            .Replace("TEnum", "T")              // replace TEnum with T
-            .Replace("\u00601", "")             // replace `1 with empty string
-            .Replace("\u00602", "")             // replace `2 with empty string
-            .Replace("\u0060", "")              // replace ` with empty string
-            .Replace(".", "::")                 // replace . with ::
-            .Replace("/", "::");                // replace / with ::
-    }
-
-    [GeneratedRegex(@"^(?<prefix>.+?)<(?<generic>[^<>]+)>(?<params>\(.*\))$")]
-    private static partial Regex GenericMethodMatch();
-
-    [GeneratedRegex(@"^(?<base>[^<]+)<(?<args>.+)>$")]
-    private static partial Regex GenericMatch();
-
-    [GeneratedRegex(@"^(?<prefix>[^<]+)<[^<>]+>(?=::)")]
-    private static partial Regex GenericReplace();
 }
