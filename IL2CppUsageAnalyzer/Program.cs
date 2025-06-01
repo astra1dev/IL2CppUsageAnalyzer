@@ -16,11 +16,9 @@ public static class Program
         public string ReturnType { get; set; } = string.Empty;
         public int MonoCount { get; set; }
         public int XrefCount { get; set; }
-        public bool IsProperty { get; set; }
-        public bool IsStripped { get; set; }
-        public bool IsCompilerGenerated { get; set; }
-        public bool IsGeneric { get; set; }
-        public bool IsFlagged { get; set; }
+        public string Type { get; set; } = "Method";
+
+        public HashSet<string> Tags { get; set; } = [];
         public List<string> MonoUsages { get; set; } = [];
         public List<string> XrefUsages { get; set; } = [];
     }
@@ -64,45 +62,64 @@ public static class Program
 
         var strippedCount = 0;
         var inlinedCount = 0;
-        var flaggedMethods = 0;
+        var usedByInlineCount = 0;
 
-        foreach (var methodRef in methodInfos)
+        foreach (var (key, methodInfo) in methodInfos)
         {
-            var xrefName = Normalizer.NormalizeXrefName(methodRef.Key);
-            if (!xrefMethodRefs.TryGetValue(xrefName, out var xrefInfo) &&
-                !xrefGenericCollapsed.TryGetValue(xrefName, out xrefInfo))
+            methodInfo.MonoUsages = methodInfo.MonoUsages.Select(Normalizer.NormalizeXrefName).ToList();
+
+            // check if the method is stripped
+            var xrefName = Normalizer.NormalizeXrefName(key);
+            if (!xrefMethodRefs.TryGetValue(xrefName, out var xrefInfo) && !xrefGenericCollapsed.TryGetValue(xrefName, out xrefInfo))
             {
+                // method is stripped
+                methodInfo.Tags.Add("stripped");
                 strippedCount++;
-                methodRef.Value.IsStripped = true;
                 continue;
             }
 
-            methodRef.Value.XrefCount = xrefInfo.CallCount;
-            methodRef.Value.XrefUsages.AddRange(xrefInfo.Usages);
-            if (xrefInfo.CallCount != methodRef.Value.MonoCount)
+            // compare call counts to catch inlined methods
+            methodInfo.XrefCount = xrefInfo.CallCount;
+            methodInfo.XrefUsages.AddRange(xrefInfo.Usages);
+            if (methodInfo.XrefCount < methodInfo.MonoCount)
             {
+                methodInfo.Tags.Add("inlined");
                 inlinedCount++;
             }
-
-            // compare mono and xref usages
-            var monoUsagesSet = new HashSet<string>(methodRef.Value.MonoUsages.Select(Normalizer.NormalizeXrefName));
-            var xrefUsagesSet = new HashSet<string>(xrefInfo.Usages);
-            var missingInXref = monoUsagesSet.Except(xrefUsagesSet).ToList();
-            var missingInMono = xrefUsagesSet.Except(monoUsagesSet).ToList();
-            if (missingInXref.Count > 0 || missingInMono.Count > 0)
+            else if (methodInfo.XrefCount > methodInfo.MonoCount)
             {
-                flaggedMethods++;
-                methodRef.Value.IsFlagged = true;
+                methodInfo.Tags.Add("used-by-inline");
+                usedByInlineCount++;
+            }
+            else
+            {
+                // compare mono and xref usages to catch more inlined methods
+                var monoUsagesSet = new HashSet<string>(methodInfo.MonoUsages);
+                var xrefUsagesSet = new HashSet<string>(methodInfo.XrefUsages);
+                var missingInXref = monoUsagesSet.Except(xrefUsagesSet).ToList();
+                var missingInMono = xrefUsagesSet.Except(monoUsagesSet).ToList();
+
+                if (missingInXref.Count > 0 || missingInMono.Count > 0)
+                {
+                    methodInfo.Tags.Add("inlined");
+                    inlinedCount++;
+                }
+                else
+                {
+                    methodInfo.Tags.Add("matched");
+                }
             }
         }
 
+        var normalized = methodInfos.ToDictionary(k => Normalizer.NormalizeXrefName(k.Key), e => e.Value);
+
         Console.WriteLine($"Total methods analyzed: {methodInfos.Count}");
-        Console.WriteLine($"Methods stripped (no xref): {strippedCount}");
-        Console.WriteLine($"Methods inlined (xref count != mono count): {inlinedCount}");
-        Console.WriteLine($"Methods flagged (mismatched usages): {flaggedMethods}");
+        Console.WriteLine($"Methods stripped: {strippedCount}");
+        Console.WriteLine($"Methods inlined: {inlinedCount}");
+        Console.WriteLine($"Methods used by inline: {usedByInlineCount}");
         Console.WriteLine();
         const string resultsFile = "method_analysis_results.json";
-        var json = JsonSerializer.Serialize(methodInfos, new JsonSerializerOptions { WriteIndented = true });
+        var json = JsonSerializer.Serialize(normalized, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(resultsFile, json);
         Console.WriteLine($"Analysis results saved to {resultsFile}");
     }
@@ -160,14 +177,25 @@ public static class Program
 
                     // Check if the method is generic
                     var isGeneric = method.HasGenericParameters;
+                    var isProperty = method.IsSpecialName && (method.Name.StartsWith("get_") || method.Name.StartsWith("set_"));
+                    var isCompilerGenerated = compilerGeneratedAttr != null || compilerGeneratedTypeAttr != null;
 
                     var methodUsage = new AnalyzedMethodInfo
                     {
                         ReturnType = Normalizer.NormalizeMonoName(method.ReturnType.FullName),
-                        IsProperty = method.IsSpecialName && (method.Name.Contains("get_") || method.Name.Contains("set_")),
-                        IsCompilerGenerated = compilerGeneratedAttr != null || compilerGeneratedTypeAttr != null,
-                        IsGeneric = isGeneric,
+                        Type = isProperty ? "Property" : "Method",
                     };
+
+                    if (isGeneric)
+                    {
+                        methodUsage.Tags.Add("generic");
+                    }
+
+                    if (isCompilerGenerated)
+                    {
+                        methodUsage.Tags.Add("compiler-generated");
+                    }
+
                     methodRefs.TryAdd(methodName, methodUsage);
                 }
             }

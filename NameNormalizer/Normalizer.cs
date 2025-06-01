@@ -45,6 +45,7 @@ public static partial class Normalizer
     public static string NormalizeXrefName(string name)
     {
         name = name.Replace("<>", "__");
+        name = name.Replace("IEnumerator<System::Object>", "IEnumerator"); // special case for IEnumerator<System.Object>
         if (name.Contains(">d"))
         {
             var parts = name.Split(">d");
@@ -54,8 +55,13 @@ public static partial class Normalizer
             name = $"{parts[0]}_d{before}::{after.Replace("::", "_")}";
         }
 
-        name = name.Replace(">d__", "_d__").Replace(">b__", "_b__").Replace("::<", "::_");
-        return name;
+        var letterMatch = CompilerGeneratedLetterReplace().Match(name);
+        if (letterMatch.Success)
+        {
+            name = CompilerGeneratedLetterReplace().Replace(name, $"_{letterMatch.Groups["letter"].Value}__");
+        }
+
+        return name.Replace("::<", "::_").Replace("|", "_");
     }
 
     public static string NormalizeMonoMethod(MethodDefinition method)
@@ -84,6 +90,12 @@ public static partial class Normalizer
 
     public static string NormalizeMonoParameter(ParameterDefinition parameter)
     {
+        // Handle special case for FilterPopUp/FilterInfoUI/FilterName
+        if (parameter.ParameterType.FullName == "FilterPopUp/FilterInfoUI/FilterName")
+        {
+            return "FilterPopUp_FilterInfoUI::FilterName";
+        }
+        
         return NormalizeMonoType(parameter.ParameterType.FullName);
     }
 
@@ -119,13 +131,11 @@ public static partial class Normalizer
         if (string.IsNullOrEmpty(monoName))
             return monoName;
 
+        monoName = BacktickReplace().Replace(monoName, "");
         return monoName
             .Replace("<.cctor>", "__cctor_")    // replace <.cctor> with __cctor_
             .Replace("<.ctor>", "__ctor_")      // replace <.ctor> with __ctor_
             .Replace("TEnum", "T")              // replace TEnum with T
-            .Replace("\u00601", "")             // replace `1 with empty string
-            .Replace("\u00602", "")             // replace `2 with empty string
-            .Replace("\u0060", "")              // replace ` with empty string
             .Replace(".", "::")                 // replace . with ::
             .Replace("/", "::");                // replace / with ::
     }
@@ -138,4 +148,10 @@ public static partial class Normalizer
 
     [GeneratedRegex(@"^(?<prefix>[^<]+)<[^<>]+>(?=::)")]
     public static partial Regex GenericReplace();
+
+    [GeneratedRegex(@"`\d+")]
+    public static partial Regex BacktickReplace();
+
+    [GeneratedRegex(">(?<letter>[a-zA-Z])__")]
+    public static partial Regex CompilerGeneratedLetterReplace();
 }
