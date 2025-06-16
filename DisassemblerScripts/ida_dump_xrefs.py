@@ -1,4 +1,4 @@
-﻿from idautils import *
+from idautils import *
 from idaapi import *
 from idc import *
 import ida_bytes
